@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2021, NVIDIA CORPORATION.
+ * Copyright (c) 2019-2022, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -208,7 +208,8 @@ class reader::impl {
   // _output_columns associated schema indices
   std::vector<int> _output_column_schemas;
 
-  bool _strings_to_categorical = false;
+  bool _strings_to_categorical  = false;
+  bool _force_binary_as_strings = false;
   data_type _timestamp_type{type_id::EMPTY};
 };
 
