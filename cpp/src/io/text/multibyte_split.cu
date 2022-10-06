@@ -439,9 +439,9 @@ class output_builder {
     _chunks.back().reserve(max_write_size * 2, stream);
   }
 
-  output_builder(output_builder&&)      = delete;
-  output_builder(const output_builder&) = delete;
-  output_builder& operator=(output_builder&&) = delete;
+  output_builder(output_builder&&)                 = delete;
+  output_builder(const output_builder&)            = delete;
+  output_builder& operator=(output_builder&&)      = delete;
   output_builder& operator=(const output_builder&) = delete;
 
   /**
@@ -643,6 +643,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
   constexpr auto max_growth = 8;
   output_builder<int64_t> offset_storage(ITEMS_PER_CHUNK, max_growth, stream);
   output_builder<char> char_storage(ITEMS_PER_CHUNK, max_growth, stream);
+  rmm::device_uvector<int64_t> tmp_offset_storage(ITEMS_PER_CHUNK, stream);
 
   fork_stream(streams, stream);
 
@@ -683,19 +684,44 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
     cudaStreamWaitEvent(scan_stream.value(), last_launch_event);
 
     if (delimiter.size() == 1) {
-      // the single-byte case allows for a much more efficient kernel, so we special-case it
-      byte_split_kernel<<<tiles_in_launch,
-                          THREADS_PER_TILE,
-                          0,
-                          scan_stream.value()>>>(  //
-        base_tile_idx,
-        chunk_offset,
-        offset_storage.size(),
-        tile_offsets,
-        delimiter[0],
-        *chunk,
-        byte_range_end,
-        offset_output);
+      if (chunk_offset + static_cast<int64_t>(chunk->size()) < byte_range_end) {
+        auto it = thrust::make_counting_iterator(chunk_offset + 1);
+        auto out_it =
+          thrust::copy_if(rmm::exec_policy_nosync(scan_stream),
+                          it,
+                          it + chunk->size(),
+                          tmp_offset_storage.begin(),
+                          [chunk_offset, data = chunk->data(), delim = delimiter[0]] __device__(
+                            int64_t i) { return data[i - chunk_offset - 1] == delim; });
+        auto size        = out_it - tmp_offset_storage.begin();
+        auto first_size  = std::min<int32_t>(offset_output.head().size(), size);
+        auto second_size = size - first_size;
+        thrust::copy(rmm::exec_policy_nosync(scan_stream),
+                     tmp_offset_storage.begin(),
+                     tmp_offset_storage.begin() + first_size,
+                     offset_output.head().data());
+        thrust::copy(rmm::exec_policy_nosync(scan_stream),
+                     tmp_offset_storage.begin() + first_size,
+                     tmp_offset_storage.begin() + size,
+                     offset_output.tail().data());
+        tile_offsets.set_inclusive_prefix(base_tile_idx + tiles_in_launch - 1,
+                                          cutoff_offset(offset_storage.size() + size, false),
+                                          scan_stream);
+      } else {
+        // the single-byte case allows for a much more efficient kernel, so we special-case it
+        byte_split_kernel<<<tiles_in_launch,
+                            THREADS_PER_TILE,
+                            0,
+                            scan_stream.value()>>>(  //
+          base_tile_idx,
+          chunk_offset,
+          offset_storage.size(),
+          tile_offsets,
+          delimiter[0],
+          *chunk,
+          byte_range_end,
+          offset_output);
+      }
     } else {
       multibyte_split_kernel<<<tiles_in_launch,
                                THREADS_PER_TILE,

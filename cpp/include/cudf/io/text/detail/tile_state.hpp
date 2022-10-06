@@ -103,6 +103,14 @@ struct scan_tile_state {
     auto const offset = (tile_idx + tile_status.size()) % tile_status.size();
     return tile_state_inclusive.element(offset, stream);
   }
+
+  inline void set_inclusive_prefix(cudf::size_type tile_idx,
+                                   T const& value,
+                                   rmm::cuda_stream_view stream)
+  {
+    auto const offset = (tile_idx + tile_status.size()) % tile_status.size();
+    tile_state_inclusive.set_element(offset, value, stream);
+  }
 };
 
 template <typename T>
