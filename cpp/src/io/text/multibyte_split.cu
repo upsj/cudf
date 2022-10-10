@@ -97,7 +97,7 @@ using cudf::io::text::detail::multistate;
 int32_t constexpr ITEMS_PER_THREAD = 64;
 int32_t constexpr THREADS_PER_TILE = 128;
 int32_t constexpr ITEMS_PER_TILE   = ITEMS_PER_THREAD * THREADS_PER_TILE;
-int32_t constexpr TILES_PER_CHUNK  = 4096;
+int32_t constexpr TILES_PER_CHUNK  = 4096 * 8;
 int32_t constexpr ITEMS_PER_CHUNK  = ITEMS_PER_TILE * TILES_PER_CHUNK;
 
 constexpr multistate transition_init(char c, cudf::device_span<char const> delim)
@@ -213,13 +213,14 @@ __global__ void multibyte_split_init_kernel(
 __global__ void multibyte_split_seed_kernel(
   cudf::io::text::detail::scan_tile_state_view<multistate> tile_multistates,
   cudf::io::text::detail::scan_tile_state_view<cutoff_offset> tile_output_offsets,
+  cudf::size_type base_tile_idx,
   multistate tile_multistate_seed,
   cutoff_offset tile_output_offset)
 {
   auto const thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (thread_idx == 0) {
-    tile_multistates.set_inclusive_prefix(-1, tile_multistate_seed);
-    tile_output_offsets.set_inclusive_prefix(-1, tile_output_offset);
+    tile_multistates.set_inclusive_prefix(base_tile_idx - 1, tile_multistate_seed);
+    tile_output_offsets.set_inclusive_prefix(base_tile_idx - 1, tile_output_offset);
   }
 }
 
@@ -439,9 +440,9 @@ class output_builder {
     _chunks.back().reserve(max_write_size * 2, stream);
   }
 
-  output_builder(output_builder&&)                 = delete;
-  output_builder(const output_builder&)            = delete;
-  output_builder& operator=(output_builder&&)      = delete;
+  output_builder(output_builder&&)      = delete;
+  output_builder(const output_builder&) = delete;
+  output_builder& operator=(output_builder&&) = delete;
   output_builder& operator=(const output_builder&) = delete;
 
   /**
@@ -632,6 +633,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
   multibyte_split_seed_kernel<<<1, 1, 0, stream.value()>>>(  //
     tile_multistates,
     tile_offsets,
+    0,
     multistate_seed,
     {});
 
@@ -671,6 +673,8 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
 
     auto offset_output = offset_storage.next_output(scan_stream);
 
+    cudaStreamWaitEvent(scan_stream.value(), last_launch_event);
+
     // reset the next chunk of tile state
     multibyte_split_init_kernel<<<tiles_in_launch,
                                   THREADS_PER_TILE,
@@ -680,8 +684,6 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
       tiles_in_launch,
       tile_multistates,
       tile_offsets);
-
-    cudaStreamWaitEvent(scan_stream.value(), last_launch_event);
 
     if (delimiter.size() == 1) {
       if (chunk_offset + static_cast<int64_t>(chunk->size()) < byte_range_end) {
@@ -704,9 +706,12 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
                      tmp_offset_storage.begin() + first_size,
                      tmp_offset_storage.begin() + size,
                      offset_output.tail().data());
-        tile_offsets.set_inclusive_prefix(base_tile_idx + tiles_in_launch - 1,
-                                          cutoff_offset(offset_storage.size() + size, false),
-                                          scan_stream);
+        multibyte_split_seed_kernel<<<1, 1, 0, scan_stream.value()>>>(  //
+          tile_multistates,
+          tile_offsets,
+          base_tile_idx + tiles_in_launch,
+          multistate_seed,
+          cutoff_offset(offset_storage.size() + size, false));
       } else {
         // the single-byte case allows for a much more efficient kernel, so we special-case it
         byte_split_kernel<<<tiles_in_launch,
@@ -765,7 +770,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
     cudaEventRecord(last_launch_event, scan_stream.value());
 
     std::swap(read_stream, scan_stream);
-    base_tile_idx += TILES_PER_CHUNK;
+    base_tile_idx += tiles_in_launch;
     chunk_offset += chunk->size();
     chunk = std::move(next_chunk);
   }

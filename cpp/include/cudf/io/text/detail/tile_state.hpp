@@ -110,6 +110,8 @@ struct scan_tile_state {
   {
     auto const offset = (tile_idx + tile_status.size()) % tile_status.size();
     tile_state_inclusive.set_element(offset, value, stream);
+    cuda::atomic<scan_tile_status, cuda::thread_scope_device> status{scan_tile_status::inclusive};
+    tile_status.set_element(offset, status, stream);
   }
 };
 
