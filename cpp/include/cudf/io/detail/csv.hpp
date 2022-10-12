@@ -27,6 +27,18 @@ namespace detail {
 namespace csv {
 
 /**
+ * @brief TODO
+ *
+ * @param source
+ * @param options
+ * @param stream
+ * @return
+ */
+csv_partial_parse_context read_csv_partial(std::unique_ptr<cudf::io::datasource>&& source,
+                                           csv_reader_options const& options,
+                                           rmm::cuda_stream_view stream);
+
+/**
  * @brief Reads the entire dataset.
  *
  * @param sources Input `datasource` object to read the dataset from

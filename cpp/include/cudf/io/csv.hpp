@@ -24,6 +24,7 @@
 #include <rmm/mr/device/per_device_resource.hpp>
 
 #include <memory>
+#include <numeric>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -42,6 +43,31 @@ namespace io {
  *@brief Builder to build options for `read_csv()`.
  */
 class csv_reader_options_builder;
+
+class csv_parse_context {
+  char context;
+
+ public:
+  csv_parse_context();
+};
+
+class csv_partial_parse_context {
+  std::uint64_t context_;
+
+ public:
+  csv_partial_parse_context();
+
+  [[nodiscard]] static csv_partial_parse_context combine(csv_partial_parse_context lhs,
+                                                         csv_partial_parse_context rhs);
+
+  static void scan(host_span<csv_partial_parse_context> contexts)
+  {
+    std::exclusive_scan(
+      contexts.begin(), contexts.end(), csv_partial_parse_context{}, contexts.begin());
+  }
+
+  [[nodiscard]] csv_parse_context finalize() const;
+};
 
 /**
  * @brief Settings to use for `read_csv()`.
@@ -113,6 +139,8 @@ class csv_reader_options {
   std::vector<std::string> _parse_hex_names;
   // Indexes of columns to parse as hexadecimal
   std::vector<int> _parse_hex_indexes;
+  // Initial state of the parsing automaton
+  csv_parse_context _init_parse_context = {};
 
   // Conversion settings
 
@@ -441,6 +469,13 @@ class csv_reader_options {
    * @return Additional values to recognize as null values
    */
   std::vector<std::string> const& get_na_values() const { return _na_values; }
+
+  /**
+   * @brief Resturns the initial parse context.
+   *
+   * @return The initial parse context used for partial byte ranges
+   */
+  csv_parse_context get_initial_parse_context() const { return _init_parse_context; }
 
   /**
    * @brief Whether to keep the built-in default NA values.
@@ -1270,6 +1305,19 @@ class csv_reader_options_builder {
   }
 
   /**
+   * @brief Sets the initial parsing context computed by an exclusive scan over read_csv_partial
+   *        results.
+   *
+   * @param context The initial parsing context
+   * @return this for chaining
+   */
+  csv_reader_options_builder& initial_parse_context(csv_parse_context context)
+  {
+    options._init_parse_context = context;
+    return *this;
+  }
+
+  /**
    * @brief move csv_reader_options member once it's built.
    */
   operator csv_reader_options&&() { return std::move(options); }
@@ -1283,6 +1331,10 @@ class csv_reader_options_builder {
    */
   csv_reader_options&& build() { return std::move(options); }
 };
+
+csv_partial_parse_context read_csv_partial(
+  csv_reader_options options,
+  rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource());
 
 /**
  * @brief Reads a CSV dataset into a set of columns.

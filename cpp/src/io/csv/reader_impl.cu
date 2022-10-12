@@ -244,7 +244,7 @@ std::pair<rmm::device_uvector<char>, selected_rows_offsets> load_data_and_gather
   size_t buffer_pos  = std::min(range_begin - std::min(range_begin, sizeof(char)), data.size());
   size_t pos         = std::min(range_begin, data.size());
   size_t header_rows = (reader_opts.get_header() >= 0) ? reader_opts.get_header() + 1 : 0;
-  uint64_t ctx       = 0;
+  uint64_t ctx       = parse_opts.initial_context;
 
   // For compatibility with the previous parser, a row is considered in-range if the
   // previous row terminator is within the given range
@@ -665,6 +665,14 @@ std::vector<data_type> determine_column_types(csv_reader_options const& reader_o
   return active_col_types;
 }
 
+csv_partial_parse_context read_csv_partial(cudf::io::datasource* source,
+                                           csv_reader_options const& reader_opts,
+                                           parse_options const& parse_opts,
+                                           rmm::cuda_stream_view stream,
+                                           rmm::mr::device_memory_resource* mr)
+{
+}
+
 table_with_metadata read_csv(cudf::io::datasource* source,
                              csv_reader_options const& reader_opts,
                              parse_options const& parse_opts,
@@ -963,6 +971,16 @@ parse_options make_parse_options(csv_reader_options const& reader_opts,
 }
 
 }  // namespace
+
+csv_parse_context read_csv_partial(std::unique_ptr<cudf::io::datasource>&& source,
+                                   csv_reader_options const& options,
+                                   rmm::cuda_stream_view stream,
+                                   rmm::mr::device_memory_resource* mr)
+{
+  auto parse_options = make_parse_options(options, stream);
+
+  return read_csv_partial(source.get(), options, parse_options, stream);
+}
 
 table_with_metadata read_csv(std::unique_ptr<cudf::io::datasource>&& source,
                              csv_reader_options const& options,

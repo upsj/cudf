@@ -201,6 +201,43 @@ table_with_metadata read_json(json_reader_options options, rmm::mr::device_memor
   return detail::json::read_json(datasources, options, cudf::default_stream_value, mr);
 }
 
+csv_partial_parse_context read_csv_partial(csv_reader_options options)
+{
+  CUDF_FUNC_RANGE();
+
+  options.set_compression(infer_compression_type(options.get_compression(), options.get_source()));
+
+  auto datasources = make_datasources(options.get_source(),
+                                      options.get_byte_range_offset(),
+                                      options.get_byte_range_size_with_padding());
+
+  CUDF_EXPECTS(datasources.size() == 1, "Only a single source is currently supported.");
+
+  return cudf::io::detail::csv::read_csv_partial(  //
+    std::move(datasources[0]),
+    options,
+    cudf::default_stream_value);
+}
+
+table_with_metadata read_csv(csv_reader_options options, rmm::mr::device_memory_resource* mr)
+{
+  CUDF_FUNC_RANGE();
+
+  options.set_compression(infer_compression_type(options.get_compression(), options.get_source()));
+
+  auto datasources = make_datasources(options.get_source(),
+                                      options.get_byte_range_offset(),
+                                      options.get_byte_range_size_with_padding());
+
+  CUDF_EXPECTS(datasources.size() == 1, "Only a single source is currently supported.");
+
+  return cudf::io::detail::csv::read_csv(  //
+    std::move(datasources[0]),
+    options,
+    cudf::default_stream_value,
+    mr);
+}
+
 table_with_metadata read_csv(csv_reader_options options, rmm::mr::device_memory_resource* mr)
 {
   CUDF_FUNC_RANGE();

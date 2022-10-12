@@ -88,6 +88,8 @@ struct parse_options {
   cudf::detail::optional_trie trie_false;
   cudf::detail::optional_trie trie_na;
   bool multi_delimiter;
+  // only relevant for host
+  uint64_t initial_context;
 
   [[nodiscard]] json_inference_options_view json_view() const
   {
